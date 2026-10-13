@@ -210,31 +210,64 @@ function showLive(){
 }
 
 /* ---------- connect ---------- */
+const U=n=>'0000'+n.toString(16)+'-0000-1000-8000-00805f9b34fb';   // full 128-bit form; some iOS browsers prefer it
+const errText=e=>{if(!e)return'unknown';const parts=[];if(e.name&&e.name!=='Error')parts.push(e.name);if(e.code!=null)parts.push('code '+e.code);parts.push(e.message||String(e));return parts.join(' / ');};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+let step='';
+async function pickDevice(){
+  const opt=[U(SVC_T2),U(SVC_T1),'battery_service'];
+  try{
+    step='opening the device list';
+    return await navigator.bluetooth.requestDevice({filters:[{namePrefix:'QN'}],optionalServices:opt});
+  }catch(e){
+    log('device list with name filter failed: '+errText(e));
+    if(e&&(e.name==='NotFoundError'||/cancel/i.test(e.message||''))) throw e;
+    step='opening the device list (show all devices)';
+    return await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:opt});
+  }
+}
+async function connectGatt(d){
+  for(let i=1;i<=3;i++){
+    try{step='connecting (attempt '+i+')';return await d.gatt.connect();}
+    catch(e){log('connect attempt '+i+' failed: '+errText(e)); if(i===3) throw e; await wait(800);}
+  }
+}
 $('connect').addEventListener('click',async()=>{
   if(!navigator.bluetooth){
     msg('This browser has no Bluetooth access. On iPhone, open this page in the Bluefy browser app. On Android or a computer, use Chrome.',true);return;
   }
+  $('msg').hidden=true;
   try{
     $('connect').disabled=true; setState('Choose "QN-Scale" from the list…');
-    dev=await navigator.bluetooth.requestDevice({
-      filters:[{namePrefix:'QN'},{services:[SVC_T2]},{services:[SVC_T1]}],
-      optionalServices:[SVC_T2,SVC_T1,'battery_service']
-    });
-    dev.addEventListener('gattserverdisconnected',()=>{setState('Disconnected. The scale switches off after a reading; tap Connect for the next one.');$('connect').disabled=false;$('connect').textContent='Connect to scale';log('disconnected');});
+    if(!dev){
+      dev=await pickDevice();
+      log('picked '+(dev.name||'(no name)')+' id '+dev.id);
+      dev.addEventListener('gattserverdisconnected',()=>{setState('Disconnected. The scale switches off after a reading; tap Connect for the next one.');$('connect').disabled=false;$('connect').textContent='Connect to scale';log('disconnected');});
+    }
     setState('Connecting…');
-    const server=await dev.gatt.connect(); log('connected to '+(dev.name||'device'));
+    const server=await connectGatt(dev); log('connected to '+(dev.name||'device'));
     protoType=0;scaleFlag=null;configSent=false;writeChr=null;timeChr=null;recent.length=0;current=null;showLive();
     let notifyChr=null;
-    try{const s=await server.getPrimaryService(SVC_T2);notifyChr=await s.getCharacteristic(NOTIFY_T2);writeChr=await s.getCharacteristic(WRITE_T2);log('using FFF0 service');}
-    catch(e){const s=await server.getPrimaryService(SVC_T1);notifyChr=await s.getCharacteristic(NOTIFY_T1);writeChr=await s.getCharacteristic(WRITE_T1);try{timeChr=await s.getCharacteristic(TIME_T1);}catch(_){}log('using FFE0 service');}
+    try{
+      step='finding the FFF0 service';const s=await server.getPrimaryService(U(SVC_T2));
+      step='finding FFF1/FFF2';notifyChr=await s.getCharacteristic(U(NOTIFY_T2));writeChr=await s.getCharacteristic(U(WRITE_T2));log('using FFF0 service');
+    }catch(e){
+      log('FFF0 not usable: '+errText(e));
+      step='finding the FFE0 service';const s=await server.getPrimaryService(U(SVC_T1));
+      notifyChr=await s.getCharacteristic(U(NOTIFY_T1));writeChr=await s.getCharacteristic(U(WRITE_T1));try{timeChr=await s.getCharacteristic(U(TIME_T1));}catch(_){}log('using FFE0 service');
+    }
     notifyChr.addEventListener('characteristicvaluechanged',ev=>{const v=ev.target.value;onPacket(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));});
+    step='turning on notifications';
     await notifyChr.startNotifications();
-    $('connect').textContent='Connected'; setState('Connected. Step on the scale.');
-    $('msg').hidden=true;
+    $('connect').textContent='Connected'; setState('Connected. Step on the scale.',true);
   }catch(e){
-    $('connect').disabled=false;
-    if(e&&e.name==='NotFoundError'){setState('Not connected');msg('No scale chosen. Step on the scale to wake it, then tap Connect again.',true);}
-    else{setState('Not connected');msg('Could not connect: '+(e&&e.message||e)+'. Make sure no other app is connected to the scale, then try again.',true);log('error: '+(e&&e.message||e));}
+    $('connect').disabled=false; setState('Not connected');
+    log('FAILED while '+step+': '+errText(e));
+    if(e&&e.name==='NotFoundError'){msg('No scale was chosen. Step on the scale until its display lights up, then tap Connect and pick QN-Scale.',true);dev=null;}
+    else{
+      if(/opening the device list/.test(step)) dev=null;
+      msg('Could not connect while '+step+' ('+errText(e)+'). Step on the scale so it is awake, check nRF Connect is fully closed, then tap Connect again.',true);
+    }
   }
 });
 

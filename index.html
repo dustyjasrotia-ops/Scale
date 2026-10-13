@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Scale Reader</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one column — live weight dial on top, connect button, then saved history. */
+:root{
+  --bg:#eef2f3; --surface:#fbfcfc; --ink:#1d2a2e; --muted:#5d6f74; --line:#cfd9db;
+  --accent:#1f7a72; --accent-soft:#d6ebe8; --bmi:#8a5a9e;
+  --good:#2f7d4a; --warn:#a86a12; --bad:#b23b3b;
+  --f-display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Atkinson Hyperlegible",system-ui,-apple-system,sans-serif;
+  --f-num:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121819; --surface:#1a2224; --ink:#e3ecec; --muted:#93a5a8; --line:#2c393b;
+  --accent:#5cc2b6; --accent-soft:#1d3a37; --bmi:#c39ad6;
+  --good:#6cc28a; --warn:#e0a84a; --bad:#ec7c7c; color-scheme:dark}}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 var(--f-body)}
+.wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:16px}
+h1,h2{font-family:var(--f-display);margin:0}
+h1{font-size:1.5rem}
+h2{font-size:1.05rem}
+.sub{color:var(--muted);font-size:.9rem;margin:2px 0 0}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px;min-width:0}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.live{text-align:center;display:grid;gap:4px;padding-block:8px}
+.weight{font-family:var(--f-num);font-size:3.6rem;font-weight:600;line-height:1}
+.weight small{font-size:1.2rem;color:var(--muted);font-weight:400;margin-left:6px}
+.state{font-size:.9rem;color:var(--muted)}
+.state.ok{color:var(--good);font-weight:700}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:700;border:1px solid currentColor}
+.c-under,.c-over{color:var(--warn)}.c-normal{color:var(--good)}.c-obese{color:var(--bad)}
+.btn{font:inherit;font-weight:700;padding:12px 18px;border-radius:10px;border:0;background:var(--accent);color:var(--surface);cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.btn:disabled{opacity:.45;cursor:default}
+.btns{display:flex;gap:10px;flex-wrap:wrap}
+label{display:grid;gap:4px;font-size:.85rem;color:var(--muted)}
+input,textarea{font:inherit;font-family:var(--f-num);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+textarea{min-height:90px;font-size:.78rem}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.msg{font-size:.88rem;padding:8px 12px;border-radius:8px;background:var(--accent-soft)}
+.msg.err{background:transparent;border:1px solid var(--bad);color:var(--bad)}
+.hint{font-size:.83rem;color:var(--muted);margin:0}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-weight:400}
+.r{text-align:right}
+.x{font:inherit;font-size:.8rem;background:none;border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;cursor:pointer}
+.x.confirm{border-color:var(--bad);color:var(--bad)}
+.empty{text-align:center;color:var(--muted);padding:16px 4px;margin:0}
+details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
+#log{max-height:220px;overflow:auto;font-family:var(--f-num);font-size:.72rem;white-space:pre-wrap;word-break:break-all;color:var(--muted);margin:8px 0 0}
+.chart svg{display:block;width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Scale Reader</h1>
+    <p class="sub">Reads weight from your Actofit Smartscale Lite (QN-Scale) over Bluetooth.</p>
+  </header>
+
+  <section class="panel live" aria-live="polite">
+    <div class="label">Weight</div>
+    <div class="weight" id="w">—<small>kg</small></div>
+    <div id="bmi"></div>
+    <div class="state" id="state">Not connected</div>
+  </section>
+
+  <div class="btns">
+    <button class="btn" id="connect" type="button">Connect to scale</button>
+    <button class="btn ghost" id="save" type="button" disabled>Save reading</button>
+  </div>
+  <div id="msg" hidden></div>
+  <p class="hint">Tap Connect, then step on the scale barefoot so it wakes up. Stand still until the reading shows "Stable". If Connect shows no scale, step on it first and tap Connect again.</p>
+
+  <section class="panel">
+    <h2>Your height</h2>
+    <label>Height (cm)<input id="height" type="number" step="0.5" min="100" max="250" inputmode="decimal" placeholder="e.g. 175"></label>
+    <p class="hint">Used to calculate BMI (weight ÷ height²). The scale itself only sends weight and a raw impedance value.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Trend</h2>
+    <div class="chart" id="chart"><p class="empty">The chart appears after two saved readings.</p></div>
+  </section>
+
+  <section class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <h2>History</h2>
+      <button class="btn ghost" id="copy" type="button" style="padding:8px 14px">Copy as CSV</button>
+    </div>
+    <div class="tbl" id="hist"><p class="empty">Saved readings appear here. They are stored in this browser on this phone.</p></div>
+    <textarea id="csvout" hidden readonly></textarea>
+    <p class="hint">Readings live in this browser only. Use Copy as CSV now and then as a backup; the CSV pastes straight into Scale Log's Import tab.</p>
+  </section>
+
+  <details>
+    <summary>Bluetooth log (for troubleshooting)</summary>
+    <div class="btns" style="margin-top:8px"><button class="x" id="copylog" type="button">Copy log</button></div>
+    <pre id="log"></pre>
+  </details>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const KEY='scale-reader-v1';
+let data={height:null,readings:[]};
+try{const s=JSON.parse(localStorage.getItem(KEY)||'null'); if(s&&Array.isArray(s.readings)) data=s;}catch(e){}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(data));}catch(e){msg('Could not save to this browser\'s storage. Copy your CSV as a backup.',true);}}
+
+/* ---------- logging ---------- */
+const logLines=[];
+function log(t){const line=new Date().toLocaleTimeString()+'  '+t;logLines.push(line);if(logLines.length>400)logLines.shift();$('log').textContent=logLines.join('\n');}
+const hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join(' ').toUpperCase();
+function msg(t,err){const m=$('msg');m.hidden=false;m.className='msg'+(err?' err':'');m.textContent=t;}
+
+/* ---------- QN protocol (per openScale's QNHandler, GPL-3.0) ---------- */
+const QN_EPOCH_OFFSET=946702800; // seconds; vendor epoch used by openScale
+const SVC_T2=0xfff0, NOTIFY_T2=0xfff1, WRITE_T2=0xfff2;
+const SVC_T1=0xffe0, NOTIFY_T1=0xffe1, WRITE_T1=0xffe3, TIME_T1=0xffe4;
+let dev=null, writeChr=null, timeChr=null, protoType=0, scaleFlag=null, configSent=false;
+let current=null; // {weight, stable, r1}
+const recent=[];
+
+function checksum(arr){let s=0;for(const v of arr)s=(s+v)&255;return s;}
+function frame(bytes){bytes.push(checksum(bytes));return new Uint8Array(bytes);}
+async function send(chr,bytes,label){
+  if(!chr) return;
+  try{ if(chr.writeValueWithResponse) await chr.writeValueWithResponse(bytes); else await chr.writeValue(bytes); log('→ '+label+': '+hex(bytes)); }
+  catch(e){ log('write failed ('+label+'): '+e.message); }
+}
+function qnSeconds(){return Math.floor(Date.now()/1000)-QN_EPOCH_OFFSET;}
+function le32(t){return [t&255,(t>>>8)&255,(t>>>16)&255,(t>>>24)&255];}
+
+/** Pick the weight scaling that gives an adult-plausible value. */
+function plausible(raw){
+  const c=[raw/100,raw/10].filter(v=>v>=10&&v<=200);
+  if(!c.length) return null;
+  if(c.length===1) return c[0];
+  return scaleFlag===1?raw/100:raw/10;
+}
+/** Decode a 0x10 live-weight frame. Returns {weight,stable,r1,layout} or null. Exposed for testing. */
+function decode10(d){
+  if(d.length<10) return null;
+  // Long layout (ES-30M style): [4]=state 0/1/2, [5..6]=weight BE, [7..8]=r1, [9..10]=r2
+  // Short layout (original):    [3..4]=weight BE, [5]=stable 1, [6..7]=r1, [8..9]=r2
+  const tryLong=()=>{ if(d.length<11||d[4]>2) return null; const w=plausible((d[5]<<8)|d[6]); return w==null?null:{weight:w,stable:d[4]===2||(d[4]===1&&((d[7]<<8)|d[8])>0),r1:(d[7]<<8)|d[8],layout:'long'}; };
+  const tryShort=()=>{ const w=plausible((d[3]<<8)|d[4]); return w==null?null:{weight:w,stable:d[5]===1,r1:(d[6]<<8)|d[7],layout:'short'}; };
+  const longFirst=d.length>=14||d[1]>=0x0e;
+  return longFirst?(tryLong()||tryShort()):(tryShort()||tryLong());
+}
+window.__decode10=decode10;
+
+async function onPacket(d){
+  log('← '+hex(d));
+  if(d.length<3) return;
+  if(!protoType) protoType=d[2];
+  const op=d[0];
+  if(op===0x12){
+    if(d.length>10) scaleFlag=d[10];
+    if(!configSent){configSent=true;
+      await send(writeChr,frame([0x13,0x09,protoType,0x01,0x10,0,0,0]),'set unit kg');
+      const t=le32(qnSeconds());
+      await send(timeChr||writeChr,new Uint8Array([0x02,...t]),'set time');
+    }
+  } else if(op===0x14){
+    await send(writeChr,frame([0x20,0x08,protoType,...le32(qnSeconds())]),'time sync');
+  } else if(op===0x21){
+    await send(writeChr,frame([0xa0,0x0d,0x04,0xfe,0,0,0,0,0,0,0,0]),'ack 1');
+    await send(writeChr,frame([0xa0,0x0d,0x02,0x01,0x00,0x08,0x00,0x21,0x06,0xb8,0x04,0x02]),'ack 2');
+  } else if(op===0x10){
+    const r=decode10(d);
+    if(!r){ setState('Reading…'); return; }
+    // Treat as stable also if the same value repeats 4 times in a row
+    recent.push(r.weight); if(recent.length>4) recent.shift();
+    const steady=recent.length===4&&recent.every(v=>Math.abs(v-recent[0])<0.05);
+    const stable=r.stable||steady;
+    const wasStable=current&&current.stable;
+    current={weight:Math.round(r.weight*100)/100,stable,r1:r.r1,layout:r.layout};
+    showLive();
+    if(stable&&!wasStable){
+      await send(writeChr,frame([0x1f,0x05,protoType,0x10]),'ack stable');
+      log('stable: '+current.weight+' kg ('+r.layout+' layout, impedance raw '+r.r1+')');
+    }
+  }
+}
+
+function setState(t,ok){const s=$('state');s.textContent=t;s.className='state'+(ok?' ok':'');}
+function bmiFor(w){return data.height?w/Math.pow(data.height/100,2):null;}
+function cat(b){if(b==null)return null;if(b<18.5)return['Underweight','c-under'];if(b<25)return['Healthy range','c-normal'];if(b<30)return['Overweight','c-over'];return['Obesity range','c-obese'];}
+function showLive(){
+  if(!current){$('w').innerHTML='—<small>kg</small>';$('bmi').innerHTML='';return;}
+  $('w').innerHTML=current.weight.toFixed(1)+'<small>kg</small>';
+  const b=bmiFor(current.weight),c=cat(b);
+  $('bmi').innerHTML=b?'<span class="num">BMI '+b.toFixed(1)+'</span> <span class="pill '+c[1]+'">'+c[0]+'</span>':'<span class="state">Add your height for BMI</span>';
+  setState(current.stable?'Stable — check it matches the scale, then save':'Measuring… stand still',current.stable);
+  $('save').disabled=!current.stable;
+}
+
+/* ---------- connect ---------- */
+$('connect').addEventListener('click',async()=>{
+  if(!navigator.bluetooth){
+    msg('This browser has no Bluetooth access. On iPhone, open this page in the Bluefy browser app. On Android or a computer, use Chrome.',true);return;
+  }
+  try{
+    $('connect').disabled=true; setState('Choose "QN-Scale" from the list…');
+    dev=await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:'QN'},{services:[SVC_T2]},{services:[SVC_T1]}],
+      optionalServices:[SVC_T2,SVC_T1,'battery_service']
+    });
+    dev.addEventListener('gattserverdisconnected',()=>{setState('Disconnected. The scale switches off after a reading; tap Connect for the next one.');$('connect').disabled=false;$('connect').textContent='Connect to scale';log('disconnected');});
+    setState('Connecting…');
+    const server=await dev.gatt.connect(); log('connected to '+(dev.name||'device'));
+    protoType=0;scaleFlag=null;configSent=false;writeChr=null;timeChr=null;recent.length=0;current=null;showLive();
+    let notifyChr=null;
+    try{const s=await server.getPrimaryService(SVC_T2);notifyChr=await s.getCharacteristic(NOTIFY_T2);writeChr=await s.getCharacteristic(WRITE_T2);log('using FFF0 service');}
+    catch(e){const s=await server.getPrimaryService(SVC_T1);notifyChr=await s.getCharacteristic(NOTIFY_T1);writeChr=await s.getCharacteristic(WRITE_T1);try{timeChr=await s.getCharacteristic(TIME_T1);}catch(_){}log('using FFE0 service');}
+    notifyChr.addEventListener('characteristicvaluechanged',ev=>{const v=ev.target.value;onPacket(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));});
+    await notifyChr.startNotifications();
+    $('connect').textContent='Connected'; setState('Connected. Step on the scale.');
+    $('msg').hidden=true;
+  }catch(e){
+    $('connect').disabled=false;
+    if(e&&e.name==='NotFoundError'){setState('Not connected');msg('No scale chosen. Step on the scale to wake it, then tap Connect again.',true);}
+    else{setState('Not connected');msg('Could not connect: '+(e&&e.message||e)+'. Make sure no other app is connected to the scale, then try again.',true);log('error: '+(e&&e.message||e));}
+  }
+});
+
+/* ---------- saving & history ---------- */
+$('save').addEventListener('click',()=>{
+  if(!current||!current.stable) return;
+  const b=bmiFor(current.weight);
+  data.readings.push({ts:Date.now(),weight:current.weight,bmi:b?Math.round(b*10)/10:null,imp:current.r1||null});
+  persist(); render(); $('save').disabled=true;
+  msg('Saved '+current.weight.toFixed(1)+' kg'+(b?', BMI '+b.toFixed(1):'')+'.');
+});
+$('height').value=data.height||'';
+$('height').addEventListener('change',()=>{const h=+$('height').value;data.height=h>=100&&h<=250?h:null;persist();showLive();});
+
+function dl(ts){return new Date(ts).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+function render(){
+  const s=[...data.readings].sort((a,b)=>a.ts-b.ts);
+  const H=$('hist');
+  if(!s.length){H.innerHTML='<p class="empty">Saved readings appear here. They are stored in this browser on this phone.</p>';}
+  else H.innerHTML='<table><thead><tr><th class="label">Date</th><th class="label r">kg</th><th class="label r">BMI</th><th></th></tr></thead><tbody>'+
+    [...s].reverse().map(r=>'<tr><td class="num">'+dl(r.ts)+'</td><td class="r num">'+r.weight.toFixed(1)+'</td><td class="r num">'+(r.bmi==null?'—':r.bmi.toFixed(1))+'</td><td class="r"><button class="x" data-del="'+r.ts+'">Delete</button></td></tr>').join('')+'</tbody></table>';
+  chart(s);
+}
+function chart(s){
+  const C=$('chart');
+  if(s.length<2){C.innerHTML='<p class="empty">The chart appears after two saved readings.</p>';return;}
+  const W=600,Hh=200,pl=42,pr=12,pt=12,pb=28,ws=s.map(r=>r.weight);
+  let lo=Math.min(...ws),hi=Math.max(...ws);const pad=Math.max(hi-lo,1)*.2;lo-=pad;hi+=pad;
+  const t0=s[0].ts,t1=s[s.length-1].ts,sp=Math.max(t1-t0,1);
+  const x=t=>pl+(t-t0)/sp*(W-pl-pr),y=v=>pt+(1-(v-lo)/(hi-lo))*(Hh-pt-pb);
+  let g='';for(let i=0;i<=3;i++){const v=hi-i*(hi-lo)/3,yy=y(v);g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(pl-6)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="var(--muted)" font-family="var(--f-num)">'+v.toFixed(1)+'</text>';}
+  const f=t=>new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  g+='<text x="'+pl+'" y="'+(Hh-8)+'" font-size="11" fill="var(--muted)" font-family="var(--f-num)">'+f(t0)+'</text><text x="'+(W-pr)+'" y="'+(Hh-8)+'" text-anchor="end" font-size="11" fill="var(--muted)" font-family="var(--f-num)">'+f(t1)+'</text>';
+  const p=s.map(r=>x(r.ts).toFixed(1)+','+y(r.weight).toFixed(1));
+  g+='<path d="M'+p[0]+' L'+p.join(' L')+' L'+x(t1)+','+(Hh-pb)+' L'+x(t0)+','+(Hh-pb)+'Z" fill="var(--accent)" opacity=".1"/><polyline points="'+p.join(' ')+'" fill="none" stroke="var(--accent)" stroke-width="2.5"/>';
+  const l=s[s.length-1];g+='<circle cx="'+x(l.ts)+'" cy="'+y(l.weight)+'" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>';
+  C.innerHTML='<svg viewBox="0 0 '+W+' '+Hh+'" role="img" aria-label="Weight over time">'+g+'</svg>';
+}
+$('hist').addEventListener('click',e=>{
+  const b=e.target.closest('[data-del]');if(!b)return;
+  if(!b.classList.contains('confirm')){b.classList.add('confirm');b.textContent='Tap to confirm';setTimeout(()=>{if(b.isConnected){b.classList.remove('confirm');b.textContent='Delete';}},4000);return;}
+  data.readings=data.readings.filter(r=>String(r.ts)!==b.dataset.del);persist();render();
+});
+function copyText(txt,btn,label){
+  const ta=$('csvout');
+  const fallback=()=>{ta.hidden=false;ta.value=txt;ta.focus();ta.select();};
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(()=>{btn.textContent='Copied';setTimeout(()=>btn.textContent=label,2000);},fallback); else fallback();
+}
+$('copy').addEventListener('click',()=>{
+  const p=n=>String(n).padStart(2,'0');
+  const rows=[...data.readings].sort((a,b)=>a.ts-b.ts).map(r=>{const d=new Date(r.ts);return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+','+r.weight+','+(r.bmi??'');});
+  copyText('date,weight,bmi\n'+rows.join('\n'),$('copy'),'Copy as CSV');
+});
+$('copylog').addEventListener('click',()=>copyText(logLines.join('\n'),$('copylog'),'Copy log'));
+render();
+})();
+</script>
+</body>
+</html>
